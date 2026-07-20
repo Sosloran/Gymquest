@@ -1,4 +1,8 @@
 services:
+  - type: redis
+    name: gymquest-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
   - type: web
     name: gymquest
     runtime: node
