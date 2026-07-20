@@ -11,7 +11,8 @@ async function boot(){
   let me=await api('GET','/api/me');
   if(me.none){ await api('POST','/api/profiles',{name:'Atleta'}); me=await api('GET','/api/me'); }
   ME=me.profile;
-  if(!ME.onboarding){ $('onboarding').classList.remove('hidden'); }
+  $('onboarding').classList.add('hidden'); // siempre oculto por defecto
+  if(!ME.onboarding){ $('onboarding').classList.remove('hidden'); } // mostrar solo si falta onboarding
   renderHome(); renderTrain(); renderProgress(); renderNutri(); renderStore(); renderMore();
   bind();
   startMusicIfOn();
@@ -188,22 +189,35 @@ $('musicBtn').onclick=async()=>{ musicOn=!musicOn; $('musicBtn').textContent=mus
 function show(v){ document.querySelectorAll('.view').forEach(x=>x.classList.add('hidden')); $('view-'+v).classList.remove('hidden'); document.querySelectorAll('.mitem').forEach(m=>m.classList.toggle('active',m.dataset.view===v)); if(v==='store')renderStore(); if(v==='progress')loadProgressData(); }
 function bind(){ document.querySelectorAll('.mitem').forEach(m=>m.onclick=()=>show(m.dataset.view)); }
 
-// ---- ONBOARDING (salvable, no bloquea en iOS) ----
-function closeOnboarding(){ $('onboarding').classList.add('hidden'); }
-$('oStart').addEventListener('click', async ()=>{
+// ---- ONBOARDING (robusto: multiples mecanismos de cierre, nunca se queda pillado) ----
+function closeOnboarding(){ const o=$('onboarding'); if(o)o.classList.add('hidden'); }
+// 1) Delegacion de eventos en document (funciona aunque el DOM tarde en existir)
+function tryCloseOnboarding(target){
+  if(!target) return;
+  // click en X, Empezar o Saltar -> cerramos (Empezar/Saltar tambien guardan)
+  if(target.id==='oClose' || target.id==='oSkip'){ doSkip(); return; }
+  if(target.id==='oStart'){ doStart(); return; }
+}
+document.addEventListener('click', (e)=>{ tryCloseOnboarding(e.target); }, true);
+// 2) Tap fuera de la card (en el overlay) cierra
+document.addEventListener('click', (e)=>{
+  const ov=$('onboarding'); if(!ov||ov.classList.contains('hidden'))return;
+  if(e.target===ov){ closeOnboarding(); }
+}, false);
+// 3) Auto-cierre de red de seguridad: si a los 15s sigue el overlay, se cierra solo
+setTimeout(()=>{ const ov=$('onboarding'); if(ov && !ov.classList.contains('hidden')){ console.log('auto-close onboarding'); closeOnboarding(); } }, 15000);
+
+async function doStart(){
   const b={name:$('oName').value||'Atleta',weight:Number($('oWeight').value)||null,height:Number($('oHeight').value)||null,age:Number($('oAge').value)||null,sex:$('oSex').value,activity:$('oAct').value,goal:$('oGoal').value,goalWeight:Number($('oGoalW').value)||null};
-  await api('POST','/api/onboard',b);
+  try{ await api('POST','/api/onboard',b); }catch(e){}
   closeOnboarding();
-  ME=await (await api('GET','/api/me')).profile;
-  renderHome(); confetti();
-});
-$('oSkip').addEventListener('click', async ()=>{
-  // marca onboarding como hecho sin datos; se pueden llenar luego en Perfil
-  await api('POST','/api/onboard',{name:$('oName').value||'Atleta',weight:null,height:null,age:null,sex:'m',activity:'moderado',goal:'mantenimiento',goalWeight:null});
+  try{ ME=await (await api('GET','/api/me')).profile; renderHome(); confetti(); }catch(e){}
+}
+async function doSkip(){
+  try{ await api('POST','/api/onboard',{name:$('oName').value||'Atleta',weight:null,height:null,age:null,sex:'m',activity:'moderado',goal:'mantenimiento',goalWeight:null}); }catch(e){}
   closeOnboarding();
-  ME=await (await api('GET','/api/me')).profile;
-  renderHome();
-});
+  try{ ME=await (await api('GET','/api/me')).profile; renderHome(); }catch(e){}
+}
 
 // ---- CONFETI ----
 let confettiRAF=null;

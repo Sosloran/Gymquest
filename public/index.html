@@ -16,11 +16,12 @@
 <body>
 
 <!-- ONBOARDING (al entrar pide datos) -->
-<div id="onboarding" class="overlay hidden">
+<div id="onboarding" class="overlay" data-close="1">
   <div class="onb-card">
+    <button id="oClose" class="onb-x" aria-label="Cerrar">✕</button>
     <h2>💪 GYMQUEST</h2>
     <p class="muted small">Por <b>Cardinal</b> · tu gimnasio como un juego RPG</p>
-    <p class="small">Cuéntanos para personalizar tu plan:</p>
+    <p class="small">Cuéntanos para personalizar tu plan (o salta):</p>
     <label>Nombre<input id="oName" type="text" placeholder="Tu nombre" maxlength="20"></label>
     <label>Peso (kg)<input id="oWeight" type="number" step="0.1" placeholder="75"></label>
     <label>Altura (cm)<input id="oHeight" type="number" placeholder="175"></label>
@@ -29,8 +30,8 @@
     <label>Actividad<select id="oAct"><option value="sedentario">Sedentario</option><option value="ligero">Ligero</option><option value="moderado">Moderado</option><option value="intenso">Intenso</option><option value="atleta">Atleta</option></select></label>
     <label>Objetivo<select id="oGoal"><option value="mantenimiento">Mantenimiento</option><option value="volumen">Ganar músculo</option><option value="definicion">Bajar grasa</option></select></label>
     <label>Peso objetivo (kg, opcional)<input id="oGoalW" type="number" step="0.1" placeholder="70"></label>
-    <button id="oStart" class="btn">🚀 Empezar mi aventura</button>
-    <button id="oSkip" class="btn sec" style="margin-top:8px">➡️ Saltar por ahora</button>
+    <button id="oStart" class="btn" type="button">🚀 Empezar mi aventura</button>
+    <button id="oSkip" class="btn sec" type="button" style="margin-top:8px">➡️ Saltar por ahora</button>
   </div>
 </div>
 
