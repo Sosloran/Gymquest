@@ -5,7 +5,9 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const crypto = require('crypto');
 const SEED = require('./seed');
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 const PORT_HTTP = 3002, ROOT = __dirname;
@@ -17,8 +19,16 @@ const REDIS_URL = process.env.REDIS_URL || null;
 let DATA = defaultData();
 let redis = null;
 
-function defaultData(){ return { profiles:{}, current:null, settings:{ theme:'dark', waterGoal:6, reminderTime:'18:00', name:'Atleta', onboarded:false, musicOn:true } }; }
+function defaultData(){ return { profiles:{}, current:null, users:{}, tokens:{}, settings:{ theme:'dark', waterGoal:6, reminderTime:'18:00', name:'Atleta', onboarded:false, musicOn:true } }; }
 function round2(n){ return Math.round(Number(n)*100)/100; }
+
+// ---- AUTENTICACION (cuentas por usuario) ----
+function hashPw(pw, salt){ salt=salt||crypto.randomBytes(16).toString('hex'); const h=crypto.pbkdf2Sync(String(pw),salt,120000,32,'sha256').toString('hex'); return salt+':'+h; }
+function verifyPw(pw, stored){ if(!stored||!stored.includes(':'))return false; const salt=stored.split(':')[0]; return crypto.timingSafeEqual(Buffer.from(hashPw(pw,salt)),Buffer.from(stored)); }
+function normEmail(e){ return String(e||'').trim().toLowerCase(); }
+function makeToken(uid){ const t=crypto.randomBytes(24).toString('hex'); DATA.tokens=DATA.tokens||{}; DATA.tokens[t]={uid,created:Date.now()}; return t; }
+function userFromReq(req){ DATA.tokens=DATA.tokens||{}; const auth=req.headers['authorization']||''; const t=auth.replace(/^Bearer /,'').trim()||null; if(t&&DATA.tokens[t])return DATA.tokens[t].uid; return null; }
+function currentProfileId(req){ const uid=userFromReq(req); if(uid&&DATA.users[uid])return DATA.users[uid].profileId; return DATA.current; }
 function sendJSON(res,s,o){ res.writeHead(s,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(o)); }
 function readBody(req){ return new Promise((res)=>{ let b=''; req.on('data',c=>b+=c); req.on('end',()=>{try{res(b?JSON.parse(b):{})}catch(e){res({})}}); }); }
 function newId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -49,6 +59,18 @@ function ensureProfile(id){
     pro:false, friends:[], challenges:[]
   };
   return DATA.profiles[id];
+}
+
+// Devuelve el perfil correcto: si hay usuario logueado, el suyo; si no, el global (anónimo).
+function getP(req){
+  const uid=userFromReq(req);
+  if(uid&&DATA.users[uid]){ return ensureProfile(DATA.users[uid].profileId); }
+  const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; return p;
+}
+function readP(req){
+  const uid=userFromReq(req);
+  const id=(uid&&DATA.users[uid])?DATA.users[uid].profileId:(DATA.current||'default');
+  return DATA.profiles[id]||null;
 }
 
 function trainLogic(p, s){
@@ -109,33 +131,49 @@ const server = USE_HTTPS
 
 function handler(req,res){
   const url=req.url.split('?')[0]; const q=Object.fromEntries(new URL(req.url,'http://x').searchParams);
-  if(req.method==='GET'&&url==='/api/info') return sendJSON(res,200,{ ranks:SEED.RANKS, missions:SEED.MISSIONS, achievements:SEED.ACHIEVEMENTS, shop:SEED.SHOP, quotes:SEED.QUOTES, influencers:SEED.INFLUENCERS, diets:SEED.DIETS, exercises:SEED.EXERCISES, cosmetics:SEED.COSMETICS, themes:SEED.THEMES, habits:SEED.HABITS, recipes:SEED.RECIPES, tips:SEED.TIPS, monetization:SEED.MONETIZATION });
+  if(req.method==='GET'&&url==='/api/info') return sendJSON(res,200,{ ranks:SEED.RANKS, missions:SEED.MISSIONS, achievements:SEED.ACHIEVEMENTS, shop:SEED.SHOP, quotes:SEED.QUOTES, influencers:SEED.INFLUENCERS, diets:SEED.DIETS, exercises:SEED.EXERCISES, cosmetics:SEED.COSMETICS, themes:SEED.THEMES, habits:SEED.HABITS, recipes:SEED.RECIPES, tips:SEED.TIPS, monetization:SEED.MONETIZATION, googleClientId:GOOGLE_CLIENT_ID });
+
+  // ---- AUTH: registro con email + contraseña ----
+  if(req.method==='POST'&&url==='/api/auth/register'){ (async()=>{ const b=await readBody(req); const email=normEmail(b.email); const pw=String(b.password||''); const name=String(b.name||'').slice(0,30)||email.split('@')[0]; if(!email||!email.includes('@'))return sendJSON(res,400,{error:'Email inválido'}); if(pw.length<4)return sendJSON(res,400,{error:'Contraseña muy corta (mín 4)'}); DATA.users=DATA.users||{}; if(Object.values(DATA.users).some(u=>u.email===email))return sendJSON(res,409,{error:'Ese email ya está registrado'}); const uid=newId(); const p=ensureProfile(newId()); p.settings.name=name; DATA.users[uid]={id:uid,email,name,pw:hashPw(pw),profileId:p.id,provider:'email',created:Date.now()}; const token=makeToken(uid); persist(); sendJSON(res,201,{token,user:{email,name},profileId:p.id}); })(); return; }
+
+  // ---- AUTH: login con email + contraseña ----
+  if(req.method==='POST'&&url==='/api/auth/login'){ (async()=>{ const b=await readBody(req); const email=normEmail(b.email); const pw=String(b.password||''); DATA.users=DATA.users||{}; const u=Object.values(DATA.users).find(x=>x.email===email); if(!u||!u.pw||!verifyPw(pw,u.pw))return sendJSON(res,401,{error:'Email o contraseña incorrectos'}); const token=makeToken(u.id); persist(); sendJSON(res,200,{token,user:{email:u.email,name:u.name},profileId:u.profileId}); })(); return; }
+
+  // ---- AUTH: login/registro con Google (token de Google Identity) ----
+  if(req.method==='POST'&&url==='/api/auth/google'){ (async()=>{ const b=await readBody(req); const cred=String(b.credential||''); if(!cred)return sendJSON(res,400,{error:'Falta credencial de Google'}); let payload=null; try{ const p=cred.split('.'); payload=JSON.parse(Buffer.from(p[1],'base64').toString('utf8')); }catch(e){ return sendJSON(res,400,{error:'Token de Google inválido'}); } const email=normEmail(payload.email); const name=String(payload.name||email.split('@')[0]).slice(0,30); if(!email)return sendJSON(res,400,{error:'Google no devolvió email'}); DATA.users=DATA.users||{}; let u=Object.values(DATA.users).find(x=>x.email===email); if(!u){ const uid=newId(); const pr=ensureProfile(newId()); pr.settings.name=name; u=DATA.users[uid]={id:uid,email,name,profileId:pr.id,provider:'google',created:Date.now()}; } const token=makeToken(u.id); persist(); sendJSON(res,200,{token,user:{email:u.email,name:u.name},profileId:u.profileId}); })(); return; }
+
+  // ---- AUTH: quién soy (validar token) ----
+  if(req.method==='GET'&&url==='/api/auth/me'){ const uid=userFromReq(req); if(!uid||!DATA.users[uid])return sendJSON(res,200,{loggedIn:false}); const u=DATA.users[uid]; return sendJSON(res,200,{loggedIn:true,user:{email:u.email,name:u.name,provider:u.provider}}); }
+
+  // ---- AUTH: cerrar sesión ----
+  if(req.method==='POST'&&url==='/api/auth/logout'){ const auth=req.headers['authorization']||''; const t=auth.replace(/^Bearer /,'').trim(); if(t&&DATA.tokens&&DATA.tokens[t]){delete DATA.tokens[t];persist();} return sendJSON(res,200,{ok:true}); }
+
   if(req.method==='GET'&&url==='/api/profiles') return sendJSON(res,200,{profiles:Object.values(DATA.profiles).map(p=>({id:p.id,level:p.level,coins:p.coins,xp:p.xp,streak:p.streak,name:p.settings.name,onboarded:!!p.onboarding})),current:DATA.current});
   if(req.method==='POST'&&url==='/api/profiles'){ (async()=>{ const b=await readBody(req); const id=b.id||newId(); ensureProfile(id); if(b.name)DATA.profiles[id].settings.name=String(b.name).slice(0,30); DATA.current=id; persist(); sendJSON(res,201,DATA.profiles[id]); })(); return; }
   if(req.method==='POST'&&url==='/api/profiles/switch'){ (async()=>{ const b=await readBody(req); if(DATA.profiles[b.id]){DATA.current=b.id;persist();sendJSON(res,200,{ok:true});} else sendJSON(res,404,{error:'no'}); })(); return; }
-  if(req.method==='GET'&&url==='/api/me'){ if(!DATA.current||!DATA.profiles[DATA.current])return sendJSON(res,200,{none:true}); const p=DATA.profiles[DATA.current]; return sendJSON(res,200,{profile:p,rank:rankFor(p.xp),next:xpForNext(p.xp),boss:p.boss}); }
-  if(req.method==='POST'&&url==='/api/onboard'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; const w=Number(b.weight),h=Number(b.height),a=Number(b.age); p.onboarding={weight:isNaN(w)||w<=0?null:round2(w),height:isNaN(h)||h<=0?null:h,age:isNaN(a)||a<=0?null:a,sex:String(b.sex||'m'),goal:b.goal||'mantenimiento',activity:b.activity||'moderado'}; p.settings.goalWeight=(()=>{const g=Number(b.goalWeight);return isNaN(g)||g<=0?null:round2(g);})(); DATA.settings.onboarded=true; persist(); sendJSON(res,200,p.onboarding); })(); return; }
-  if(req.method==='POST'&&url==='/api/train'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; const r=trainLogic(p,b); persist(); sendJSON(res,201,{rank:rankFor(p.xp),next:xpForNext(p.xp),...r}); })(); return; }
-  if(req.method==='POST'&&url==='/api/weight'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; const w=round2(Number(b.weight)); if(!isNaN(w)){p.weightLog.push({date:new Date().toISOString().slice(0,10),weight:w});if(b.goalWeight)p.settings.goalWeight=round2(Number(b.goalWeight));} persist(); sendJSON(res,201,{weightLog:p.weightLog,goal:p.settings.goalWeight}); })(); return; }
-  if(req.method==='GET'&&url==='/api/weight'){ const p=DATA.profiles[DATA.current||'default']; return sendJSON(res,200,{weightLog:p?p.weightLog:[],goal:p?p.settings.goalWeight:null}); }
-  if(req.method==='POST'&&url==='/api/measure'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; const part=String(b.part||'brazo'); p.measures[part]=p.measures[part]||[]; p.measures[part].push({date:new Date().toISOString().slice(0,10),value:round2(Number(b.value))}); persist(); sendJSON(res,201,p.measures); })(); return; }
-  if(req.method==='GET'&&url==='/api/measure'){ const p=DATA.profiles[DATA.current||'default']; return sendJSON(res,200,{measures:p?p.measures:{}}); }
-  if(req.method==='POST'&&url==='/api/pr'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; const ex=String(b.exercise||''); if(ex&&b.value){ p.prs[ex]=round2(Number(b.value)); persist(); } sendJSON(res,201,p.prs); })(); return; }
-  if(req.method==='GET'&&url==='/api/pr'){ const p=DATA.profiles[DATA.current||'default']; return sendJSON(res,200,{prs:p?p.prs:{}}); }
-  if(req.method==='POST'&&url==='/api/photo'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; if(b.data){ const thumb=String(b.data).slice(0,500000); p.photos.push({id:newId(),date:new Date().toISOString().slice(0,10),data:thumb,note:String(b.note||'')}); persist(); } sendJSON(res,201,{count:p.photos.length}); })(); return; }
-  if(req.method==='GET'&&url==='/api/photo'){ const p=DATA.profiles[DATA.current||'default']; return sendJSON(res,200,{photos:(p?p.photos:[]).map(x=>({id:x.id,date:x.date,note:x.note}))}); }
-  if(req.method==='POST'&&url==='/api/habit'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; const today=new Date().toISOString().slice(0,10); p.habits[today]=p.habits[today]||{}; p.habits[today][b.id]=(b.done!==false); persist(); sendJSON(res,200,{habits:p.habits[today]}); })(); return; }
-  if(req.method==='GET'&&url==='/api/habit'){ const p=DATA.profiles[DATA.current||'default']; const today=new Date().toISOString().slice(0,10); return sendJSON(res,200,{habits:(p&&p.habits[today])||{}}); }
-  if(req.method==='POST'&&url==='/api/water'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; const today=new Date().toISOString().slice(0,10); p.waterLog=p.waterLog||{}; p.waterLog[today]=(p.waterLog[today]||0)+(b.add||1); persist(); sendJSON(res,200,{water:p.waterLog[today],goal:DATA.settings.waterGoal}); })(); return; }
-  if(req.method==='GET'&&url==='/api/achievements'){ const p=DATA.profiles[DATA.current||'default']; return sendJSON(res,200,{unlocked:(p?p.achievements:[]).map(a=>a.id),all:SEED.ACHIEVEMENTS}); }
-  if(req.method==='POST'&&url==='/api/shop/buy'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; const item=SEED.SHOP.find(s=>s.id===b.id)||SEED.COSMETICS.find(s=>s.id===b.id); if(!item)return sendJSON(res,404,{error:'no'}); if(p.coins<item.cost)return sendJSON(res,400,{error:'sinmonedas'}); p.coins-=item.cost; p.bought=p.bought||[]; p.bought.push(item.id); persist(); sendJSON(res,200,{coins:p.coins,bought:p.bought}); })(); return; }
-  if(req.method==='POST'&&url==='/api/pro/activate'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; if(String(b.code||'').toUpperCase()==='CARDINALPRO'){ p.pro=true; persist(); return sendJSON(res,200,{pro:true}); } sendJSON(res,400,{error:'codigo'}); })(); return; }
-  if(req.method==='POST'&&url==='/api/challenge'){ (async()=>{ const b=await readBody(req); const p=ensureProfile(DATA.current||'default'); DATA.current=p.id; p.challenges=p.challenges||[]; const c={id:newId(),name:String(b.name||'Reto'),type:b.type||'train',goal:Number(b.goal)||5,progress:0,reward:Number(b.reward)||50,done:false,friend:b.friend||null}; p.challenges.push(c); persist(); sendJSON(res,201,p.challenges); })(); return; }
-  if(req.method==='GET'&&url==='/api/challenge'){ const p=DATA.profiles[DATA.current||'default']; return sendJSON(res,200,{challenges:p?p.challenges:[]}); }
+  if(req.method==='GET'&&url==='/api/me'){ const p=readP(req); if(!p)return sendJSON(res,200,{none:true}); return sendJSON(res,200,{profile:p,rank:rankFor(p.xp),next:xpForNext(p.xp),boss:p.boss}); }
+  if(req.method==='POST'&&url==='/api/onboard'){ (async()=>{ const b=await readBody(req); const p=getP(req); const w=Number(b.weight),h=Number(b.height),a=Number(b.age); p.onboarding={weight:isNaN(w)||w<=0?null:round2(w),height:isNaN(h)||h<=0?null:h,age:isNaN(a)||a<=0?null:a,sex:String(b.sex||'m'),goal:b.goal||'mantenimiento',activity:b.activity||'moderado'}; p.settings.goalWeight=(()=>{const g=Number(b.goalWeight);return isNaN(g)||g<=0?null:round2(g);})(); DATA.settings.onboarded=true; persist(); sendJSON(res,200,p.onboarding); })(); return; }
+  if(req.method==='POST'&&url==='/api/train'){ (async()=>{ const b=await readBody(req); const p=getP(req); const r=trainLogic(p,b); persist(); sendJSON(res,201,{rank:rankFor(p.xp),next:xpForNext(p.xp),...r}); })(); return; }
+  if(req.method==='POST'&&url==='/api/weight'){ (async()=>{ const b=await readBody(req); const p=getP(req); const w=round2(Number(b.weight)); if(!isNaN(w)){p.weightLog.push({date:new Date().toISOString().slice(0,10),weight:w});if(b.goalWeight)p.settings.goalWeight=round2(Number(b.goalWeight));} persist(); sendJSON(res,201,{weightLog:p.weightLog,goal:p.settings.goalWeight}); })(); return; }
+  if(req.method==='GET'&&url==='/api/weight'){ const p=readP(req); return sendJSON(res,200,{weightLog:p?p.weightLog:[],goal:p?p.settings.goalWeight:null}); }
+  if(req.method==='POST'&&url==='/api/measure'){ (async()=>{ const b=await readBody(req); const p=getP(req); const part=String(b.part||'brazo'); p.measures[part]=p.measures[part]||[]; p.measures[part].push({date:new Date().toISOString().slice(0,10),value:round2(Number(b.value))}); persist(); sendJSON(res,201,p.measures); })(); return; }
+  if(req.method==='GET'&&url==='/api/measure'){ const p=readP(req); return sendJSON(res,200,{measures:p?p.measures:{}}); }
+  if(req.method==='POST'&&url==='/api/pr'){ (async()=>{ const b=await readBody(req); const p=getP(req); const ex=String(b.exercise||''); if(ex&&b.value){ p.prs[ex]=round2(Number(b.value)); persist(); } sendJSON(res,201,p.prs); })(); return; }
+  if(req.method==='GET'&&url==='/api/pr'){ const p=readP(req); return sendJSON(res,200,{prs:p?p.prs:{}}); }
+  if(req.method==='POST'&&url==='/api/photo'){ (async()=>{ const b=await readBody(req); const p=getP(req); if(b.data){ const thumb=String(b.data).slice(0,500000); p.photos.push({id:newId(),date:new Date().toISOString().slice(0,10),data:thumb,note:String(b.note||'')}); persist(); } sendJSON(res,201,{count:p.photos.length}); })(); return; }
+  if(req.method==='GET'&&url==='/api/photo'){ const p=readP(req); return sendJSON(res,200,{photos:(p?p.photos:[]).map(x=>({id:x.id,date:x.date,note:x.note}))}); }
+  if(req.method==='POST'&&url==='/api/habit'){ (async()=>{ const b=await readBody(req); const p=getP(req); const today=new Date().toISOString().slice(0,10); p.habits[today]=p.habits[today]||{}; p.habits[today][b.id]=(b.done!==false); persist(); sendJSON(res,200,{habits:p.habits[today]}); })(); return; }
+  if(req.method==='GET'&&url==='/api/habit'){ const p=readP(req); const today=new Date().toISOString().slice(0,10); return sendJSON(res,200,{habits:(p&&p.habits[today])||{}}); }
+  if(req.method==='POST'&&url==='/api/water'){ (async()=>{ const b=await readBody(req); const p=getP(req); const today=new Date().toISOString().slice(0,10); p.waterLog=p.waterLog||{}; p.waterLog[today]=(p.waterLog[today]||0)+(b.add||1); persist(); sendJSON(res,200,{water:p.waterLog[today],goal:DATA.settings.waterGoal}); })(); return; }
+  if(req.method==='GET'&&url==='/api/achievements'){ const p=readP(req); return sendJSON(res,200,{unlocked:(p?p.achievements:[]).map(a=>a.id),all:SEED.ACHIEVEMENTS}); }
+  if(req.method==='POST'&&url==='/api/shop/buy'){ (async()=>{ const b=await readBody(req); const p=getP(req); const item=SEED.SHOP.find(s=>s.id===b.id)||SEED.COSMETICS.find(s=>s.id===b.id); if(!item)return sendJSON(res,404,{error:'no'}); if(p.coins<item.cost)return sendJSON(res,400,{error:'sinmonedas'}); p.coins-=item.cost; p.bought=p.bought||[]; p.bought.push(item.id); persist(); sendJSON(res,200,{coins:p.coins,bought:p.bought}); })(); return; }
+  if(req.method==='POST'&&url==='/api/pro/activate'){ (async()=>{ const b=await readBody(req); const p=getP(req); if(String(b.code||'').toUpperCase()==='CARDINALPRO'){ p.pro=true; persist(); return sendJSON(res,200,{pro:true}); } sendJSON(res,400,{error:'codigo'}); })(); return; }
+  if(req.method==='POST'&&url==='/api/challenge'){ (async()=>{ const b=await readBody(req); const p=getP(req); p.challenges=p.challenges||[]; const c={id:newId(),name:String(b.name||'Reto'),type:b.type||'train',goal:Number(b.goal)||5,progress:0,reward:Number(b.reward)||50,done:false,friend:b.friend||null}; p.challenges.push(c); persist(); sendJSON(res,201,p.challenges); })(); return; }
+  if(req.method==='GET'&&url==='/api/challenge'){ const p=readP(req); return sendJSON(res,200,{challenges:p?p.challenges:[]}); }
   if(req.method==='POST'&&url==='/api/calc'){ (async()=>{ const b=await readBody(req); sendJSON(res,200,calc(b)); })(); return; }
-  if(req.method==='POST'&&url==='/api/settings'){ (async()=>{ const b=await readBody(req); if(b.theme)DATA.settings.theme=b.theme; if(b.waterGoal)DATA.settings.waterGoal=Number(b.waterGoal); if(b.reminderTime)DATA.settings.reminderTime=String(b.reminderTime); if(b.musicOn!==undefined)DATA.settings.musicOn=!!b.musicOn; if(b.name&&DATA.current)DATA.profiles[DATA.current].settings.name=String(b.name).slice(0,30); persist(); sendJSON(res,200,DATA.settings); })(); return; }
+  if(req.method==='POST'&&url==='/api/settings'){ (async()=>{ const b=await readBody(req); if(b.theme)DATA.settings.theme=b.theme; if(b.waterGoal)DATA.settings.waterGoal=Number(b.waterGoal); if(b.reminderTime)DATA.settings.reminderTime=String(b.reminderTime); if(b.musicOn!==undefined)DATA.settings.musicOn=!!b.musicOn; if(b.name){ const p=getP(req); p.settings.name=String(b.name).slice(0,30); } persist(); sendJSON(res,200,DATA.settings); })(); return; }
   if(req.method==='GET'&&url==='/api/settings'){ return sendJSON(res,200,DATA.settings); }
-  if(req.method==='GET'&&url==='/api/stats'){ const p=DATA.profiles[DATA.current||'default']; if(!p)return sendJSON(res,200,{none:true}); const sess=p.sessions; const byType={}; sess.forEach(s=>byType[s.type]=(byType[s.type]||0)+1); const totalMin=sess.reduce((a,s)=>a+(s.duration||0),0); return sendJSON(res,200,{totalSessions:sess.length,totalMin,byType,streak:p.streak,level:p.level,coins:p.coins,weightLog:p.weightLog.slice(-20),photos:p.photos.length,challenges:(p.challenges||[]).filter(c=>!c.done).length}); }
+  if(req.method==='GET'&&url==='/api/stats'){ const p=readP(req); if(!p)return sendJSON(res,200,{none:true}); const sess=p.sessions; const byType={}; sess.forEach(s=>byType[s.type]=(byType[s.type]||0)+1); const totalMin=sess.reduce((a,s)=>a+(s.duration||0),0); return sendJSON(res,200,{totalSessions:sess.length,totalMin,byType,streak:p.streak,level:p.level,coins:p.coins,weightLog:p.weightLog.slice(-20),photos:p.photos.length,challenges:(p.challenges||[]).filter(c=>!c.done).length}); }
   if(req.method==='GET'&&url==='/api/export'){ res.writeHead(200,{'Content-Type':'application/json','Content-Disposition':'attachment; filename="gymquest.json"'}); return res.end(JSON.stringify(DATA)); }
   if(req.method==='POST'&&url==='/api/import'){ (async()=>{ const b=await readBody(req); if(b.data){DATA=b.data;persist();sendJSON(res,200,{ok:true});} else sendJSON(res,400,{error:'no'}); })(); return; }
   if(req.method==='GET') return serveStatic(req,res);

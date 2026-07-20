@@ -79,6 +79,17 @@ canvas#weightChart{width:100%;max-width:320px;background:var(--panel2);border-ra
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:60}
 .secret{background:var(--panel);border:1px dashed var(--gold);border-radius:12px;padding:14px;margin-top:10px}
 .secret input{width:100%;margin-bottom:8px}
+/* AUTH: login / registro */
+.auth-card{max-width:380px}
+.auth-hero{text-align:center;margin:-6px 0 6px}
+.auth-img{width:100%;max-width:220px;height:auto;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.4)}
+.gbtn-wrap{display:flex;justify-content:center;margin:10px 0}
+.gbtn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;background:#fff;color:#1f2937;border:none;border-radius:10px;padding:12px;font-weight:700;font-size:.95rem;cursor:pointer;touch-action:manipulation}
+.auth-sep{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.8rem;margin:14px 0}
+.auth-sep::before,.auth-sep::after{content:"";flex:1;height:1px;background:var(--panel2)}
+.auth-err{background:#7f1d1d;color:#fecaca;border-radius:8px;padding:8px 10px;font-size:.85rem;margin:6px 0}
+.auth-toggle{text-align:center;font-size:.85rem;color:var(--muted);margin:10px 0 0}
+.auth-toggle a{color:var(--gold);font-weight:700;text-decoration:none}
 /* Overlay + estado oculto (especificidad alta para que SI se oculte) */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px;overflow:auto}
 .overlay.hidden{display:none !important}

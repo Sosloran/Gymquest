@@ -1,6 +1,7 @@
 // GYMQUEST frontend (Cardinal) v3
 const $=id=>document.getElementById(id);
-const api=async(m,u,b)=>{const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(u,o);return r.json();};
+let TOKEN=localStorage.getItem('gq_token')||null;
+const api=async(m,u,b)=>{const o={method:m,headers:{'Content-Type':'application/json'}};if(TOKEN)o.headers['Authorization']='Bearer '+TOKEN;if(b)o.body=JSON.stringify(b);const r=await fetch(u,o);return r.json();};
 const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let ME=null, INFO=null, WATER=0, WGOAL=6, ACH=null, musicOn=true, audioCtx=null, musicTimer=null;
 
@@ -8,14 +9,67 @@ async function boot(){
   INFO=await api('GET','/api/info');
   const s=await api('GET','/api/settings'); if(s.theme&&s.theme!=='dark')document.body.classList.add('theme-'+s.theme); musicOn=s.musicOn!==false;
   if(s.name)$('musicBtn').textContent=musicOn?'🎵':'🔇';
+  setupAuth();
+  // Si no hay token, mostrar pantalla de cuenta (login/registro)
+  if(!TOKEN){ $('auth').classList.remove('hidden'); return; }
+  const acc=await api('GET','/api/auth/me');
+  if(!acc.loggedIn){ TOKEN=null; localStorage.removeItem('gq_token'); $('auth').classList.remove('hidden'); return; }
+  await loadApp();
+}
+async function loadApp(){
+  $('auth').classList.add('hidden');
   let me=await api('GET','/api/me');
-  if(me.none){ await api('POST','/api/profiles',{name:'Atleta'}); me=await api('GET','/api/me'); }
+  if(me.none){ await api('POST','/api/onboard',{}); me=await api('GET','/api/me'); }
   ME=me.profile;
-  $('onboarding').classList.add('hidden'); // siempre oculto por defecto
-  if(!ME.onboarding){ $('onboarding').classList.remove('hidden'); } // mostrar solo si falta onboarding
+  $('onboarding').classList.add('hidden');
+  if(!ME.onboarding){ $('onboarding').classList.remove('hidden'); }
   renderHome(); renderTrain(); renderProgress(); renderNutri(); renderStore(); renderMore();
   bind();
   startMusicIfOn();
+}
+
+// ---- AUTH: login / registro (frontend) ----
+let AUTH_MODE='register'; // 'register' | 'login'
+function authErr(msg){ const e=$('authErr'); if(!msg){e.classList.add('hidden');return;} e.textContent=msg; e.classList.remove('hidden'); }
+async function doAuth(){
+  authErr('');
+  const email=$('authEmail').value.trim(), pw=$('authPw').value, name=$('authName').value.trim();
+  if(!email||!pw){ authErr('Escribe tu email y contraseña'); return; }
+  const path=AUTH_MODE==='register'?'/api/auth/register':'/api/auth/login';
+  const body=AUTH_MODE==='register'?{email,password:pw,name}:{email,password:pw};
+  const r=await api('POST',path,body);
+  if(r.token){ TOKEN=r.token; localStorage.setItem('gq_token',TOKEN); await loadApp(); }
+  else authErr(r.error||'No se pudo, revisa los datos');
+}
+async function googleLogin(credential){
+  const r=await api('POST','/api/auth/google',{credential});
+  if(r.token){ TOKEN=r.token; localStorage.setItem('gq_token',TOKEN); await loadApp(); }
+  else authErr(r.error||'Error con Google');
+}
+function setupAuth(){
+  $('authSubmit').addEventListener('click', doAuth);
+  $('authToggle').addEventListener('click', e=>{ e.preventDefault();
+    AUTH_MODE=AUTH_MODE==='register'?'login':'register';
+    $('authSubmit').textContent=AUTH_MODE==='register'?'Crear cuenta':'Iniciar sesión';
+    $('authToggleTxt').textContent=AUTH_MODE==='register'?'¿Ya tienes cuenta?':'¿No tienes cuenta?';
+    $('authToggle').textContent=AUTH_MODE==='register'?'Inicia sesión':'Regístrate';
+    $('authNameL').style.display=AUTH_MODE==='register'?'':'none';
+    authErr('');
+  });
+  $('authSkip').addEventListener('click', async e=>{ e.preventDefault(); TOKEN=null; localStorage.removeItem('gq_token'); await loadApp(); });
+  // Google Identity: solo si el server tiene GOOGLE_CLIENT_ID configurado
+  const cid=INFO&&INFO.googleClientId;
+  if(cid){
+    const init=()=>{ if(!window.google||!google.accounts){ setTimeout(init,300); return; }
+      google.accounts.id.initialize({ client_id:cid, callback:(resp)=>googleLogin(resp.credential) });
+      google.accounts.id.renderButton($('gbtn'),{theme:'filled_blue',size:'large',width:320,text:'continue_with'});
+    }; init();
+  } else {
+    // Sin client_id configurado: ocultar zona Google y mostrar aviso suave
+    $('gbtn').style.display='none';
+    const fb=$('authGoogleFallback'); fb.classList.remove('hidden');
+    fb.addEventListener('click',()=>authErr('El inicio con Google se activa cuando Cardinal configure la clave de Google. Por ahora usa email y contraseña 👇'));
+  }
 }
 function avatarEmoji(){ const b=ME?ME.bought:[]; if(b.includes('avatar_legend'))return '🦸'; if(b.includes('avatar_warrior'))return '🥷'; return '🧍'; }
 
@@ -152,6 +206,7 @@ async function renderMore(){
   const mon=INFO.monetization;
   $('view-more').innerHTML=`
     <h2>⋯ Más</h2>
+    <div id="acctBox" class="secret" style="border-style:solid;border-color:var(--panel2)"></div>
     <button id="exportBtn" class="btn wide">⬇ Exportar datos</button>
     <label class="btn wide filebtn">⬆ Importar datos<input id="importFile" type="file" accept=".json" hidden></label>
     <button id="themeBtn" class="btn wide sec">🌗 Cambiar tema rápido</button>
@@ -172,6 +227,16 @@ async function renderMore(){
     const tip=link?`<a class="btn wide" href="${esc(link.startsWith('http')?link:'https://'+link)}" target="_blank">☕ Invítame un café (propina)</a>`:'<p class="small muted">Pega tu PayPal/crypto arriba.</p>';
     $('tipBox').innerHTML=tip; alert('¡Listo! Tu botón de propina está activo. Comparte tu app y recibe pagos directo a tu billetera.'); };
   const saved=localStorage.getItem('gq_pay'); if(saved){const m=JSON.parse(saved);const link=m.pay||(m.btc?'bitcoin:'+m.btc:'');if(link)$('tipBox').innerHTML=`<a class="btn wide" href="${esc(link.startsWith('http')?link:'https://'+link)}" target="_blank">☕ Invítame un café (propina)</a>`;}
+  // Cuenta actual + logout
+  const acc=await api('GET','/api/auth/me');
+  const box=$('acctBox');
+  if(acc.loggedIn){
+    box.innerHTML=`<h3>👤 Tu cuenta</h3><p class="small">${esc(acc.user.name||'')} · <span class="muted">${esc(acc.user.email||'')}</span> ${acc.user.provider==='google'?'<span class="muted">(Google)</span>':''}</p><button id="logoutBtn" class="btn wide sec">🚪 Cerrar sesión</button>`;
+    $('logoutBtn').onclick=async()=>{ await api('POST','/api/auth/logout'); TOKEN=null; localStorage.removeItem('gq_token'); location.reload(); };
+  } else {
+    box.innerHTML=`<h3>👤 Cuenta</h3><p class="small muted">Estás sin cuenta: tu progreso se guarda solo en este equipo.</p><button id="loginNowBtn" class="btn wide">Crear cuenta / Iniciar sesión</button>`;
+    $('loginNowBtn').onclick=()=>{ $('auth').classList.remove('hidden'); };
+  }
 }
 
 // ---- MUSIC (Web Audio, generada, sin archivos) ----
