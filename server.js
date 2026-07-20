@@ -75,7 +75,7 @@ function trainLogic(p, s){
   return {xp,coins,rec};
 }
 
-const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.ico':'image/x-icon','.webmanifest':'application/manifest+json'};
+const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml','.ico':'image/x-icon','.webmanifest':'application/manifest+json','.apk':'application/vnd.android.package-archive'};
 function serveStatic(req,res){
   let u=req.url.split('?')[0]; if(u==='/')u='/index.html';
   const fp=path.join(PUBLIC_DIR,path.normalize(u));
