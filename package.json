@@ -1,0 +1,16 @@
+{
+  "name": "gymquest",
+  "version": "4.0.0",
+  "description": "GYMQUEST - tu gimnasio como un juego RPG (Cardinal). 100% local/gratis, almacenamiento en Redis en la nube.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "redis": "^4.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

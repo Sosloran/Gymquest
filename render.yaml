@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: gymquest
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/info
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: gymquest-redis
+          property: connectionString

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <title>GYMQUEST · Cardinal</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GYMQUEST">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ONBOARDING (al entrar pide datos) -->
+<div id="onboarding" class="overlay hidden">
+  <div class="onb-card">
+    <h2>💪 GYMQUEST</h2>
+    <p class="muted small">Por <b>Cardinal</b> · tu gimnasio como un juego RPG</p>
+    <p class="small">Cuéntanos para personalizar tu plan:</p>
+    <label>Nombre<input id="oName" type="text" placeholder="Tu nombre" maxlength="20"></label>
+    <label>Peso (kg)<input id="oWeight" type="number" step="0.1" placeholder="75"></label>
+    <label>Altura (cm)<input id="oHeight" type="number" placeholder="175"></label>
+    <label>Edad<input id="oAge" type="number" placeholder="25"></label>
+    <label>Sexo<select id="oSex"><option value="m">Masculino</option><option value="f">Femenino</option></select></label>
+    <label>Actividad<select id="oAct"><option value="sedentario">Sedentario</option><option value="ligero">Ligero</option><option value="moderado">Moderado</option><option value="intenso">Intenso</option><option value="atleta">Atleta</option></select></label>
+    <label>Objetivo<select id="oGoal"><option value="mantenimiento">Mantenimiento</option><option value="volumen">Ganar músculo</option><option value="definicion">Bajar grasa</option></select></label>
+    <label>Peso objetivo (kg, opcional)<input id="oGoalW" type="number" step="0.1" placeholder="70"></label>
+    <button id="oStart" class="btn">🚀 Empezar mi aventura</button>
+    <button id="oSkip" class="btn sec" style="margin-top:8px">➡️ Saltar por ahora</button>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">💪 GYMQUEST</div>
+  <div class="top-actions">
+    <button id="musicBtn" class="iconbtn" title="Música">🎵</button>
+    <div class="coins">🪙 <span id="coinVal">0</span></div>
+  </div>
+</header>
+
+<main id="view-home" class="view"></main>
+<section id="view-train" class="view hidden"></section>
+<section id="view-progress" class="view hidden"></section>
+<section id="view-nutri" class="view hidden"></section>
+<section id="view-store" class="view hidden"></section>
+<section id="view-more" class="view hidden"></section>
+
+<nav class="menu">
+  <button class="mitem active" data-view="home">🏠<span>Inicio</span></button>
+  <button class="mitem" data-view="train">🎯<span>Entrenar</span></button>
+  <button class="mitem" data-view="progress">📊<span>Progreso</span></button>
+  <button class="mitem" data-view="nutri">🥗<span>Nutri</span></button>
+  <button class="mitem" data-view="store">🛍️<span>Tienda</span></button>
+  <button class="mitem" data-view="more">⋯<span>Más</span></button>
+</nav>
+
+<footer class="credit">Hecho por <b>Cardinal</b> · 100% local y gratis</footer>
+<canvas id="confetti" class="confetti hidden"></canvas>
+<script src="/app.js"></script>
+</body>
+</html>
