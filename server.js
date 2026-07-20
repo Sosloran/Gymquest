@@ -96,7 +96,18 @@ function calc(b){
   return{imc,imcLabel:body,tdee,protein,fat,carbs};
 }
 
-const server=https.createServer((req,res)=>{
+// En Render (PaaS con TLS terminado) no hay certificados locales -> usamos HTTP.
+// En tu VM local sí hay key.pem/cert.pem -> usamos HTTPS con cert autofirmado.
+const CERT_PATH = path.join(ROOT,'cert.pem');
+const KEY_PATH = path.join(ROOT,'key.pem');
+const USE_HTTPS = fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH);
+const CERT = USE_HTTPS ? { key: fs.readFileSync(KEY_PATH), cert: fs.readFileSync(CERT_PATH) } : null;
+
+const server = USE_HTTPS
+  ? https.createServer(CERT, handler)
+  : http.createServer(handler);
+
+function handler(req,res){
   const url=req.url.split('?')[0]; const q=Object.fromEntries(new URL(req.url,'http://x').searchParams);
   if(req.method==='GET'&&url==='/api/info') return sendJSON(res,200,{ ranks:SEED.RANKS, missions:SEED.MISSIONS, achievements:SEED.ACHIEVEMENTS, shop:SEED.SHOP, quotes:SEED.QUOTES, influencers:SEED.INFLUENCERS, diets:SEED.DIETS, exercises:SEED.EXERCISES, cosmetics:SEED.COSMETICS, themes:SEED.THEMES, habits:SEED.HABITS, recipes:SEED.RECIPES, tips:SEED.TIPS, monetization:SEED.MONETIZATION });
   if(req.method==='GET'&&url==='/api/profiles') return sendJSON(res,200,{profiles:Object.values(DATA.profiles).map(p=>({id:p.id,level:p.level,coins:p.coins,xp:p.xp,streak:p.streak,name:p.settings.name,onboarded:!!p.onboarding})),current:DATA.current});
@@ -129,7 +140,7 @@ const server=https.createServer((req,res)=>{
   if(req.method==='POST'&&url==='/api/import'){ (async()=>{ const b=await readBody(req); if(b.data){DATA=b.data;persist();sendJSON(res,200,{ok:true});} else sendJSON(res,400,{error:'no'}); })(); return; }
   if(req.method==='GET') return serveStatic(req,res);
   sendJSON(res,404,{error:'no'});
-});
+}
 
 async function initStorage(){
   if(REDIS_URL){
@@ -141,6 +152,9 @@ function loadFile(){ try{ DATA=JSON.parse(fs.readFileSync(DATA_FILE,'utf8')); }c
 
 (async()=>{
   await initStorage();
-  server.listen(PORT,'0.0.0.0',()=>console.log(`GYMQUEST (Cardinal) en puerto ${PORT} ${REDIS_URL?'[Redis]':'[archivo]'}`));
+  server.listen(PORT,'0.0.0.0',()=>console.log(`GYMQUEST (Cardinal) ${USE_HTTPS?'[HTTPS]':'[HTTP]'} en puerto ${PORT} ${REDIS_URL?'[Redis]':'[archivo]'}`));
 })();
-http.createServer((req,res)=>{ res.writeHead(301,{Location:`https://${req.headers.host.split(':')[0]}:${PORT}${req.url}`}); res.end(); }).listen(PORT_HTTP,'0.0.0.0',()=>console.log(`Redirect en :${PORT_HTTP}`));
+// Solo en VM local: redirect HTTP->HTTPS en puerto alterno
+if(USE_HTTPS){
+  http.createServer((req,res)=>{ res.writeHead(301,{Location:`https://${req.headers.host.split(':')[0]}:${PORT}${req.url}`}); res.end(); }).listen(PORT_HTTP,'0.0.0.0',()=>console.log(`Redirect en :${PORT_HTTP}`));
+}
