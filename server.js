@@ -7,7 +7,7 @@ const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
 const SEED = require('./seed');
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '218606258243-mltfvu19m1ptueiluu3q2dn34lt4bu2e.apps.googleusercontent.com';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 const PORT_HTTP = 3002, ROOT = __dirname;
